@@ -1,0 +1,157 @@
+#Practical Machine Learning - Course Project
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively.  The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. We may use any of the other variables to predict with.
+
+##Getting Data
+
+The training data for this project are available here: 
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here: 
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+```{r gettingData, cache=TRUE}
+if (!file.exists('./pml-training.csv')) {
+    download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', 
+        destfile = './pml-training.csv')
+}
+if (!file.exists('./pml-testing.csv')) {
+    download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv', 
+        destfile = './pml-testing.csv')
+}
+
+trainingData<-read.csv('./pml-training.csv',header=T)
+testingData<-read.csv('./pml-testing.csv',header=T)
+```
+
+##Pre-Processing Data
+
+Due to the first 8 variables of the sets are used for indexing and characterization of the data we decided to removed them
+ in order to avoid the introduction of noise in our model prediction.
+
+```{r removeColumns, cache=TRUE}
+trainingData<-trainingData[,8:ncol(trainingData)]
+```
+
+Taking into account that there are some predictors that have similar values for each row, the best thing to do is to remove these columns that have varianze near to zero.
+
+```{r removePredictors, cache=TRUE, results='hide'}
+library(caret)
+nzv<-nearZeroVar(trainingData)
+trainingSubdata<-trainingData[,-nzv]
+```
+
+If we take a look at the data, we realize that there are many columns that their value are NAs.  Leaving these missing values in our sets makes the model creation slower and reduce the final accuracy, so we decided to remove these variables too.
+
+```{r removeNAs, cache=TRUE}
+NAs <- apply(trainingSubdata, 2, function(x) {
+    sum(is.na(x))
+})
+trainingSubdata <- trainingSubdata[, which(NAs == 0)]
+```
+
+##Cross Validation
+
+To cross validate our model, we have to split the training dataset into two groups: training set and cross-validation set.  For this purpose we decided to splitted them with the following percentages: 80% for training and 20% for cross-validation.
+
+```{r crossValidation, cache=TRUE}
+set.seed(260714)
+
+train<- createDataPartition (trainingSubdata$classe, p = 0.80, list = FALSE)
+training<-trainingSubdata[train,]
+crossv<-trainingSubdata[-train,]
+dim(trainingSubdata);dim(training);dim(crossv);
+```
+
+Watching the dimension of the whole dataset and the rest of them, this function did the split in the right way.
+
+##Choosing the Model
+
+Although in most of the papers and webs it is said that the "Random Forest"" algorithm is one of the best predictors to use, we want to compare others.  So we are using:
+
+1. Tree.
+
+2. Tree Bag.
+
+3. Random Forest.
+
+4. Boosting Forest.
+
+We are using the default parameters to train our models but we want to specify the number of resampling iterations to 4, use the cross validation resampling method and allow the parallel backend.
+
+###Tree Algorithm
+
+```{r treeAlgorithm, cache=TRUE}
+treeFit<-train(classe~.,data=training, method='rpart', trControl = trainControl(method = "cv", number = 4, allowParallel = TRUE))
+```
+
+###Tree Bag Algorithm
+
+```{r treebagAlgorithm, cache=TRUE, results='hide'}
+treebagFit<-train(classe~.,data=training, method='treebag', trControl = trainControl(method = "cv", number = 4, allowParallel = TRUE))
+```
+
+###Random Forest Algorithm
+
+```{r randomForestAlgorithm, cache=TRUE, results='hide'}
+randomForestFit<-train(classe~.,data=training, method='rf', trControl = trainControl(method = "cv", number = 4, allowParallel = TRUE))
+```
+
+###Boosting Forest Algorithm
+
+```{r boostingAlgorithm, cache=TRUE, results='hide'}
+boostingForestFit<-train(classe~.,data=training, method='gbm', trControl = trainControl(method = "cv", number = 4, allowParallel = TRUE))
+```
+
+##Selecting the Model
+
+```{r confusionMatrixes, cache=TRUE}
+confTree<-confusionMatrix(crossv$classe,predict(treeFit,crossv))
+confTreeBag<-confusionMatrix(crossv$classe,predict(treebagFit,crossv))
+confRandomForest<-confusionMatrix(crossv$classe,predict(randomForestFit,crossv))
+confBoostingForest<-confusionMatrix(crossv$classe,predict(boostingForestFit,crossv))
+
+accuracies<-c(confTree$overal[1],confTreeBag$overal[1],confRandomForest$overal[1],confBoostingForest$overal[1])
+names(accuracies)<-c('Tree','Tree Bag','Random Forest','Boosting Forest')
+accuracies
+```
+
+As we can we see in the results, the best algorithm is "Random Forest", that something that we knew before, but now is justified to use this model on the rest of the project.
+
+If want to know the out of sample error, we get the next result:
+
+```{r sampleError, cache=TRUE}
+out_of_sample_error <- 1 - confRandomForest$overal[1]
+names(out_of_sample_error)<-c('Out of Sample Error')
+out_of_sample_error
+```
+
+So, the "Random Forest Model" has an Accuracy of `r confRandomForest$overal[1]*100`% and an Out of Sample Error of `r out_of_sample_error*100`% attending to the Cross-Validation Set
+
+##Test Set Prediction
+
+Now that we have selected the "Random Forest Model" and defined its Accuracy and Out of Sample Error let's use it with the Test Set to predict the values:
+
+```{r testPrediction, cache=TRUE}
+testPed<-predict(randomForestFit,testingData)
+testPed
+```
+
+And finally we are going to save this result to a file:
+
+```{r saveResults, cache=TRUE}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(testPed)
+```
+
+
+
